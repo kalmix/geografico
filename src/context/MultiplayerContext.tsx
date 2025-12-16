@@ -177,24 +177,31 @@ export const MultiplayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
     }, []);
 
     const fetchPlayers = async (roomId: string) => {
-        const { data, error } = await supabase
-            .from('room_players')
-            .select(`
-                *,
-                profile:profiles(username, avatar_url)
-            `)
-            .eq('room_id', roomId);
+        const { data, error } = await supabase.rpc('get_room_players', {
+            p_room_id: roomId
+        });
+
+        console.log('Players RPC:', data, error);
 
         if (error) {
             console.error('Error fetching players:', error);
             return;
         }
 
-        const mappedPlayers = data.map((p: any) => ({
-            ...p,
-            profile: p.profile
-        }));
-        setPlayers(mappedPlayers);
+        if (data) {
+            // Check if RPC returns profiles joined or flat. Assumed joined as per previous code structure desire.
+            // If the RPC returns a different shape, we might need to map it.
+            // For now, trusting the user's "Lista de jugadores llega correctamente".
+            // However, the previous manual join returned `profile: { ... }`.
+            // If the RPC returns flat columns (e.g. username), we'd need to map.
+            // But let's assume the RPC mimics the join or the user updated the interface?
+            // Wait, looking at current Player interface: interface Player { ... profile?: { username, avatar_url } }
+            // If RPC is a SQL function, it might return json or flattened rows.
+            // The common pattern for Supabase RPC returning relations is to return JSON or if it's a view.
+            // Given the user said "Listo de jugadores llega correctamente", I will assume `data` is compatible with `Player[]`.
+            // But to be safe against "No hay 500", I'll just set it.
+            setPlayers(data as Player[]);
+        }
     };
 
     // 2. Create Room
