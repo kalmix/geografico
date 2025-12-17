@@ -60,13 +60,13 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
                 <div className="flex p-1 bg-night/50 border border-white/5 rounded-lg mb-6">
                     <button
                         onClick={() => setMode('signin')}
-                        className={`flex - 1 py - 2 text - sm font - medium rounded - md transition - all ${mode === 'signin' ? 'bg-brand-europe text-white shadow-lg' : 'text-soft-gray hover:text-white'} `}
+                        className={`flex-1 py-2 text-sm font-medium rounded-md transition-all ${mode === 'signin' ? 'bg-brand-europe text-white shadow-lg' : 'text-soft-gray hover:text-white'} `}
                     >
                         Sign In
                     </button>
                     <button
                         onClick={() => setMode('signup')}
-                        className={`flex - 1 py - 2 text - sm font - medium rounded - md transition - all ${mode === 'signup' ? 'bg-brand-europe text-white shadow-lg' : 'text-soft-gray hover:text-white'} `}
+                        className={`flex-1 py-2 text-sm font-medium rounded-md transition-all ${mode === 'signup' ? 'bg-brand-europe text-white shadow-lg' : 'text-soft-gray hover:text-white'} `}
                     >
                         Sign Up
                     </button>

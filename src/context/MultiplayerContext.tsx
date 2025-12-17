@@ -55,6 +55,9 @@ interface MultiplayerContextType {
     declineInvite: (inviteId: string) => Promise<void>;
     invites: any[];
     isHost: boolean;
+    debugLogs: string[];
+    addLog: (msg: string) => void;
+    refreshPlayers: () => Promise<void>;
 }
 
 const MultiplayerContext = createContext<MultiplayerContextType | undefined>(undefined);
@@ -68,7 +71,90 @@ export const MultiplayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const [error, setError] = useState<string | null>(null);
     const [roomChannel, setRoomChannel] = useState<RealtimeChannel | null>(null);
     const [gameChannel, setGameChannel] = useState<RealtimeChannel | null>(null);
-    const [invites, setInvites] = useState<any[]>([]); // Step 9
+    const [invites, setInvites] = useState<any[]>([]);
+    const [debugLogs, setDebugLogs] = useState<string[]>([]);
+
+    const addLog = useCallback((msg: string) => {
+        const time = new Date().toLocaleTimeString();
+        setDebugLogs(prev => [`[${time}] ${msg}`, ...prev].slice(0, 50));
+    }, []);
+
+    const fetchPlayers = useCallback(async (roomId: string) => {
+        addLog(`🔄 fetching players for ${roomId}...`);
+        const { data, error } = await supabase.rpc('get_room_players', {
+            p_room_id: roomId
+        });
+
+        if (error) {
+            addLog(`❌ Error fetching players: ${error.message}`);
+            return;
+        }
+
+        if (data) {
+            addLog(`✅ Players received: ${data.length}`);
+            if (data.length > 0) {
+                // addLog(`👤 Sample: ${JSON.stringify(data[0]).substring(0, 100)}...`);
+            }
+            // Map flat RPC result to nested profile structure expected by UI
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const mappedPlayers = data.map((p: any) => ({
+                id: p.id,
+                room_id: p.room_id,
+                player_id: p.player_id,
+                score: p.score,
+                lives: p.lives,
+                is_ready: p.is_ready,
+                joined_at: p.joined_at,
+                profile: {
+                    // Try flat first (RPC table return), then nested (RPC json return or similar)
+                    username: p.username || p.profile?.username || 'Sin Nombre',
+                    avatar_url: p.avatar_url || p.profile?.avatar_url
+                }
+            }));
+            setPlayers(mappedPlayers);
+        }
+    }, [addLog]);
+
+    // 4. Lobby Subscription
+    const subscribeToRoom = useCallback((roomId: string) => {
+        addLog(`📡 Subscribing to room:${roomId}`);
+        const channel = supabase
+            .channel(`room:${roomId}`)
+            .on(
+                'postgres_changes',
+                {
+                    event: '*',
+                    schema: 'public',
+                    table: 'room_players',
+                    filter: `room_id=eq.${roomId}`
+                },
+                (payload) => {
+                    addLog(`🔔 Lobby update: ${payload.eventType}`);
+                    fetchPlayers(roomId);
+                }
+            )
+            .on(
+                'postgres_changes',
+                {
+                    event: 'UPDATE',
+                    schema: 'public',
+                    table: 'rooms',
+                    filter: `id=eq.${roomId}`
+                },
+                (payload) => {
+                    console.log('Room update', payload);
+                    setRoom(payload.new as Room);
+                }
+            )
+            .subscribe((status) => {
+                addLog(`📡 Room Channel Status: ${status}`);
+                if (status === 'SUBSCRIBED') {
+                    fetchPlayers(roomId);
+                }
+            });
+
+        setRoomChannel(channel);
+    }, [addLog, fetchPlayers]);
 
     const isHost = room?.host_id === user?.id;
 
@@ -119,41 +205,6 @@ export const MultiplayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
         };
     }, [user?.id]);
 
-    // 4. Lobby Subscription
-    const subscribeToRoom = useCallback((roomId: string) => {
-        const channel = supabase
-            .channel(`room:${roomId}`)
-            .on(
-                'postgres_changes',
-                {
-                    event: '*',
-                    schema: 'public',
-                    table: 'room_players',
-                    filter: `room_id=eq.${roomId}`
-                },
-                (payload) => {
-                    console.log('Lobby update', payload);
-                    fetchPlayers(roomId);
-                }
-            )
-            .on(
-                'postgres_changes',
-                {
-                    event: 'UPDATE',
-                    schema: 'public',
-                    table: 'rooms',
-                    filter: `id=eq.${roomId}`
-                },
-                (payload) => {
-                    console.log('Room update', payload);
-                    setRoom(payload.new as Room);
-                }
-            )
-            .subscribe();
-
-        setRoomChannel(channel);
-    }, []);
-
     // 7. Game Subscription
     const subscribeToGame = useCallback((roomId: string) => {
         const channel = supabase
@@ -175,34 +226,6 @@ export const MultiplayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
         setGameChannel(channel);
     }, []);
-
-    const fetchPlayers = async (roomId: string) => {
-        const { data, error } = await supabase.rpc('get_room_players', {
-            p_room_id: roomId
-        });
-
-        console.log('Players RPC:', data, error);
-
-        if (error) {
-            console.error('Error fetching players:', error);
-            return;
-        }
-
-        if (data) {
-            // Check if RPC returns profiles joined or flat. Assumed joined as per previous code structure desire.
-            // If the RPC returns a different shape, we might need to map it.
-            // For now, trusting the user's "Lista de jugadores llega correctamente".
-            // However, the previous manual join returned `profile: { ... }`.
-            // If the RPC returns flat columns (e.g. username), we'd need to map.
-            // But let's assume the RPC mimics the join or the user updated the interface?
-            // Wait, looking at current Player interface: interface Player { ... profile?: { username, avatar_url } }
-            // If RPC is a SQL function, it might return json or flattened rows.
-            // The common pattern for Supabase RPC returning relations is to return JSON or if it's a view.
-            // Given the user said "Listo de jugadores llega correctamente", I will assume `data` is compatible with `Player[]`.
-            // But to be safe against "No hay 500", I'll just set it.
-            setPlayers(data as Player[]);
-        }
-    };
 
     // 2. Create Room
     const createRoom = async (gameMode: string = 'deathmatch') => {
@@ -250,7 +273,11 @@ export const MultiplayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
     // 3. Join Room
     const joinRoom = async (code: string) => {
-        if (!user) return false;
+        addLog(`🚪 Joining room ${code}...`);
+        if (!user) {
+            addLog(`❌ No user found for join.`);
+            return false;
+        }
         setLoading(true);
         setError(null);
 
@@ -262,15 +289,18 @@ export const MultiplayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 .single();
 
             if (fetchError || !foundRoom) throw new Error('Room not found');
+            addLog(`🏠 Room found: ${foundRoom.id}`);
 
             const { data: existingPlayer } = await supabase
                 .from('room_players')
                 .select('*')
                 .eq('room_id', foundRoom.id)
                 .eq('player_id', user.id)
-                .single();
+                .maybeSingle();
 
             if (!existingPlayer) {
+                addLog(`➕ Inserting player record...`);
+                // ... (rest logic same)
                 const { count } = await supabase
                     .from('room_players')
                     .select('*', { count: 'exact', head: true })
@@ -323,13 +353,22 @@ export const MultiplayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
         if (!user || !room) return;
 
         const me = players.find(p => p.player_id === user.id);
-        if (!me) return;
+        if (!me) {
+            addLog('❌ Cannot toggle ready: Player not found in list');
+            return;
+        }
 
-        await supabase
+        addLog(`🔄 Toggling ready status to: ${!me.is_ready}`);
+
+        const { error } = await supabase
             .from('room_players')
             .update({ is_ready: !me.is_ready })
             .eq('room_id', room.id)
             .eq('player_id', user.id);
+
+        if (error) {
+            addLog(`❌ Error toggling ready: ${error.message}`);
+        }
     };
 
     // 6. Start Game
@@ -414,11 +453,16 @@ export const MultiplayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
         setInvites(prev => prev.filter(i => i.id !== inviteId));
     };
 
+    const refreshPlayers = async () => {
+        if (room?.id) await fetchPlayers(room.id);
+    };
+
     return (
         <MultiplayerContext.Provider value={{
             room, players, gameState, loading, error,
             createRoom, joinRoom, leaveRoom, toggleReady, startGame, submitAnswer, isHost,
-            invites, sendInvite, declineInvite
+            invites, sendInvite, declineInvite,
+            debugLogs, addLog, refreshPlayers
         }}>
             {children}
         </MultiplayerContext.Provider>

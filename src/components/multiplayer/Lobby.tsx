@@ -11,6 +11,17 @@ const Lobby: React.FC = () => {
     const [inviteId, setInviteId] = useState('');
     const [showInviteModal, setShowInviteModal] = useState(false);
 
+    // Debugging Logs
+    React.useEffect(() => {
+        console.log('--- LOBBY RENDER DEBUG ---');
+        console.log('Current User:', user?.id);
+        console.log('Room Host:', room?.host_id);
+        console.log('Am I Host?:', isHost);
+        console.log('Players List:', players);
+        console.log('Room Status:', room?.status);
+        console.log('--------------------------');
+    }, [room, players, user, isHost]);
+
     if (!room) return null;
 
     const copyCode = () => {
@@ -104,7 +115,7 @@ const Lobby: React.FC = () => {
                                         {player.profile?.username || 'Jugador'} {isMe && '(Tú)'}
                                     </h3>
                                     <p className={`text-xs ${player.is_ready ? 'text-emerald-400' : 'text-soft-gray'}`}>
-                                        {player.is_ready ? '¡Listo!' : 'Esperando...'}
+                                        {player.is_ready ? '¡Listo!' : 'No Listo'}
                                     </p>
                                 </div>
                             </div>
