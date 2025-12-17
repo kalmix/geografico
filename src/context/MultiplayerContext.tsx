@@ -499,6 +499,18 @@ export const MultiplayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
         try {
             addLog(`📝 Updating room status to 'playing'...`);
+
+            // 1. Reset Stats for ALL players
+            const { error: statsError } = await supabase
+                .from('room_players')
+                .update({ lives: 3, score: 0 })
+                .eq('room_id', room.id);
+
+            if (statsError) {
+                addLog(`❌ Error resetting stats: ${statsError.message}`);
+                throw statsError;
+            }
+
             const { error: roomError } = await supabase.from('rooms')
                 .update({ status: 'playing' })
                 .eq('id', room.id);
@@ -507,13 +519,18 @@ export const MultiplayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 throw roomError;
             }
 
+            // 2. Pick Random Start Player
+            const randomPlayerIndex = Math.floor(Math.random() * players.length);
+            const startPlayerId = players[randomPlayerIndex].player_id;
+            addLog(`🎲 Random Start Player Selected: ${startPlayerId}`);
+
             addLog(`🎲 Inserting initial game state...`);
             const { error: gameError } = await supabase.from('game_state').insert({
                 room_id: room.id,
-                current_turn: room.host_id,
+                current_turn: startPlayerId,
                 current_question: initialQuestion,
                 round: 1,
-                time_left: 30
+                time_left: 15
             });
 
             if (gameError) {
@@ -527,41 +544,106 @@ export const MultiplayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
         }
     };
 
-    // 8. Player Response
-    const submitAnswer = async (isCorrect: boolean, nextQuestion?: any) => {
-        if (!user || !room || !gameState) return;
+    // Host Timer Logic
+    useEffect(() => {
+        let interval: any;
 
-        const me = players.find(p => p.player_id === user.id);
-        if (!me) return;
-
-        if (isCorrect) {
-            await supabase
-                .from('room_players')
-                .update({ score: me.score + 1 })
-                .eq('room_id', room.id)
-                .eq('player_id', user.id);
-        } else {
-            await supabase
-                .from('room_players')
-                .update({ lives: me.lives - 1 })
-                .eq('room_id', room.id)
-                .eq('player_id', user.id);
+        if (isHost && gameState && room?.status === 'playing') {
+            interval = setInterval(async () => {
+                if (gameState.time_left > 0) {
+                    await supabase
+                        .from('game_state')
+                        .update({ time_left: gameState.time_left - 1 })
+                        .eq('room_id', room!.id);
+                } else {
+                    addLog(`⏰ Timeout! Rotando turno...`);
+                    // @ts-ignore
+                    await submitAnswer(false, undefined, true);
+                }
+            }, 1000);
         }
 
-        // Rotate turn logic (Client driven for simplicity as per requirements)
-        if (nextQuestion) {
+        return () => clearInterval(interval);
+    }, [isHost, room?.status, gameState?.time_left, gameState?.current_turn, room?.id]);
+
+
+    // 8. Player Response
+    const submitAnswer = async (isCorrect: boolean, nextQuestion?: any, isTimeout: boolean = false) => {
+        if (!user || !room || !gameState) return;
+
+        const isMe = user.id === gameState.current_turn;
+
+        // If it's a timeout, the Host calls this. If it's a normal answer, only the turn player (user) calls.
+        if (!isMe && !isTimeout) {
+            addLog(`🛑 Ignored submitAnswer: Not my turn.`);
+            return;
+        }
+
+        const playerToUpdate = isTimeout ? gameState.current_turn : user.id;
+
+        try {
+            const me = players.find(p => p.player_id === playerToUpdate);
+            if (!me) {
+                addLog(`❌ Player not found for score update`);
+                return;
+            }
+
+            // --- LIVES / SCORE UPDATE (SYNCED TO DB) ---
+            if (!isTimeout) {
+                if (isCorrect) {
+                    const { error } = await supabase
+                        .from('room_players')
+                        .update({ score: me.score + 1 })
+                        .eq('room_id', room.id)
+                        .eq('player_id', playerToUpdate);
+                    if (error) addLog(`❌ Error updating score: ${error.message}`);
+                } else {
+                    const { error } = await supabase
+                        .from('room_players')
+                        .update({ lives: me.lives - 1 })
+                        .eq('room_id', room.id)
+                        .eq('player_id', playerToUpdate);
+                    if (error) addLog(`❌ Error updating lives: ${error.message}`);
+                }
+            } else {
+                // Timeout penalty: Lose life
+                const { error } = await supabase
+                    .from('room_players')
+                    .update({ lives: me.lives - 1 })
+                    .eq('room_id', room.id)
+                    .eq('player_id', playerToUpdate);
+                if (error) addLog(`❌ Error updating lives (timeout): ${error.message}`);
+            }
+            // -------------------------------------------
+
+            // Rotate turn Logic
             const currentIndex = players.findIndex(p => p.player_id === gameState.current_turn);
             const nextIndex = (currentIndex + 1) % players.length;
             const nextPlayerId = players[nextIndex].player_id;
 
-            await supabase.from('game_state')
-                .update({
-                    current_turn: nextPlayerId,
-                    current_question: nextQuestion,
-                    round: gameState.round + (nextIndex === 0 ? 1 : 0), // Increment round if back to first player? Optional
-                    time_left: 30
-                })
+            const updates: any = {
+                current_turn: nextPlayerId,
+                round: gameState.round + (nextIndex === 0 ? 1 : 0),
+                time_left: 15 // Reset timer to 15s provided default
+            };
+
+            if (nextQuestion) {
+                updates.current_question = nextQuestion;
+            }
+
+            const { error } = await supabase.from('game_state')
+                .update(updates)
                 .eq('room_id', room.id);
+
+            if (error) {
+                addLog(`❌ Error updating game state (Turn Rotation): ${error.message}`);
+                throw error;
+            } else {
+                addLog(`🔄 Turn rotated to: ${nextPlayerId}`);
+            }
+
+        } catch (e: any) {
+            addLog(`❌ Critical submit error: ${e.message}`);
         }
     };
 

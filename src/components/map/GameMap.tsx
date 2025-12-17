@@ -94,6 +94,8 @@ const GameMap = ({ onGuess, countryStatus: propsStatus, overrideTarget }: GameMa
         if (!geoJson || !filteredCountries || !filteredCountries.length) return null;
 
         const validCodes = new Set(filteredCountries.map(c => c.cca3));
+        validCodes.add('XKX'); // Force enable Kosovo
+        validCodes.add('KOS');
 
         // Filter features
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
