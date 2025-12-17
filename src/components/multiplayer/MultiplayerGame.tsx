@@ -5,9 +5,31 @@ import { useAuth } from '../../context/AuthContext';
 import GameMap from '../map/GameMap';
 
 const MultiplayerGame: React.FC = () => {
-    const { gameState, players, submitAnswer } = useMultiplayer();
+    const { gameState, players, submitAnswer, leaveRoom } = useMultiplayer();
     const { filteredCountries } = useGame(); // Use this to lookup country details
     const auth = useAuth();
+
+    const [interstitial, setInterstitial] = React.useState<string | null>(null);
+
+    // Audio Refs (Simple oscillator beeps for now or placeholder) (Optional, keeping simple visual first)
+    // To make it cool we need assets, but we can do a visual countdown first.
+
+    // Effect: Trigger 3-2-1 on turn change
+    React.useEffect(() => {
+        if (!gameState?.current_turn) return;
+
+        // Start Sequence
+        setInterstitial('3');
+        const t1 = setTimeout(() => setInterstitial('2'), 1000);
+        const t2 = setTimeout(() => setInterstitial('1'), 2000);
+        const t3 = setTimeout(() => setInterstitial('¡TU TURNO!'), 3000);
+        const t4 = setTimeout(() => setInterstitial(null), 4000);
+
+        return () => {
+            clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); clearTimeout(t4);
+        };
+    }, [gameState?.current_turn]);
+
 
     // Derived state
     const currentTurnPlayer = useMemo(() => {
@@ -28,6 +50,7 @@ const MultiplayerGame: React.FC = () => {
 
     // Handle Guess
     const handleGuess = async (code: string) => {
+        if (interstitial) return; // Block during interstitial
         if (!isMyTurn) return; // Ignore if not my turn
         if (!gameState) return;
 
@@ -50,12 +73,29 @@ const MultiplayerGame: React.FC = () => {
     if (!gameState) return <div>Loading Game State...</div>;
 
     return (
-        <div className="w-full h-screen bg-night text-white flex flex-col">
+        <div className="w-full h-screen bg-night text-white flex flex-col relative">
+
+            {/* INTERSTITIAL OVERLAY */}
+            {interstitial && (
+                <div className="absolute inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center animate-in fade-in duration-300">
+                    <div className="text-8xl font-black text-transparent bg-clip-text bg-gradient-to-r from-brand-asia to-emerald-400 animate-bounce">
+                        {interstitial}
+                    </div>
+                </div>
+            )}
+
+            {/* Background Music */}
+            <audio autoPlay loop>
+                <source src="/music/background_loop.mp3" type="audio/mp3" />
+                Your browser does not support the audio element.
+            </audio>
+
             {/* Top Bar: HUD */}
             <header className="px-6 py-4 bg-deep/80 border-b border-white/10 flex justify-between items-center z-50">
                 <div className="flex items-center gap-4">
                     <div className="text-2xl font-black text-brand-europe">MAP BATTLE</div>
-                    <div className="bg-white/10 px-3 py-1 rounded text-sm text-soft-gray font-mono">
+                    <div className={`px-3 py-1 rounded text-sm font-mono transition-all ${gameState.time_left <= 5 ? 'bg-red-500/20 text-red-400 animate-pulse' : 'bg-white/10 text-soft-gray'
+                        }`}>
                         TIME: {gameState.time_left}s
                     </div>
                 </div>
@@ -80,6 +120,16 @@ const MultiplayerGame: React.FC = () => {
                     <div className={`text-right ${isMyTurn ? 'text-brand-europe font-bold' : 'text-soft-gray'}`}>
                         {isMyTurn ? "TU TURNO" : `Turno de: ${currentTurnPlayer?.profile?.username || 'Jugador'}`}
                     </div>
+                    <button
+                        onClick={() => {
+                            if (window.confirm("¿Seguro que quieres rendirte?")) {
+                                leaveRoom();
+                            }
+                        }}
+                        className="bg-red-500/20 text-red-400 hover:bg-red-500/40 px-3 py-1 rounded text-xs border border-red-500/30 transition-colors"
+                    >
+                        RENDIRSE
+                    </button>
                 </div>
             </header>
 
@@ -120,14 +170,24 @@ const MultiplayerGame: React.FC = () => {
                         overrideTarget={targetCountry}
                     />
 
-                    {/* Turn Indicator Overlay (Mobile/Visual) */}
+                    {/* Turn Indicator Overlay (Mobile/Visual) & Interaction Blocker */}
                     <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[1000] pointer-events-none">
-                        {!isMyTurn && (
+                        {!isMyTurn && !interstitial && (
                             <div className="bg-black/60 backdrop-blur text-white px-4 py-2 rounded-full text-sm border border-white/10">
                                 Espera tu turno
                             </div>
                         )}
                     </div>
+
+                    {/* Hard Interaction Blocker for Non-Turn Players */}
+                    {(!isMyTurn || !!interstitial) && (
+                        <div className="absolute inset-0 z-50 bg-transparent cursor-not-allowed"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                console.log("🚫 Interaction blocked by overlay");
+                            }}
+                        />
+                    )}
                 </main>
             </div>
         </div>
